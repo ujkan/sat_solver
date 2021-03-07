@@ -51,5 +51,7 @@ fun evalCNF :: "formulaCNF \<Rightarrow> state \<Rightarrow> bool"
   | "evalCNF [c] s = ceval c s"
   | "evalCNF (c # c' # cs) s = (ceval c s \<and> evalCNF (c' # cs) s)"
 
+(*TODO: convert formula to formulaCNF*)
+
 
 end
