@@ -51,7 +51,40 @@ fun evalCNF :: "formulaCNF \<Rightarrow> state \<Rightarrow> bool"
   | "evalCNF [c] s = ceval c s"
   | "evalCNF (c # c' # cs) s = (ceval c s \<and> evalCNF (c' # cs) s)"
 
-(*TODO: convert formula to formulaCNF*)
+fun literal_to_formula :: "literal \<Rightarrow> formula"
+  where
+    "literal_to_formula (P x) = Var x"
+  | "literal_to_formula (N x) = Not (Var x)"
+
+fun clause_to_formula :: "clauseCNF \<Rightarrow> formula"
+  where
+    "clause_to_formula [] = Const True"
+  | "clause_to_formula (l # ls) = Or (literal_to_formula l) (clause_to_formula ls)"
+
+fun cnf_to_formula :: "formulaCNF \<Rightarrow> formula"
+  where
+    "cnf_to_formula [] = Const False"
+  | "cnf_to_formula [c] = (if c = [] then Const True else clause_to_formula c)"
+  | "cnf_to_formula (c#cs) = And (clause_to_formula c) (cnf_to_formula cs)"
+
+
+thm "list.induct"
+
+lemma "Q [] \<Longrightarrow> (\<And>x. Q [x]) \<Longrightarrow> (\<And>x y xs. Q xs \<Longrightarrow> Q (y # xs) \<Longrightarrow> Q (x # y # xs)) \<Longrightarrow> Q xs"
+  sorry
+
+lemma ltf_correct: "leval l s \<longleftrightarrow> eval (literal_to_formula l) s"
+  by (induction l) auto
+
+lemma ctf_correct: "ceval c s \<longleftrightarrow> eval (clause_to_formula c) s"
+  apply (induction c)
+   apply (auto simp: ltf_correct)
+  done
+
+lemma conv_correct: "evalCNF cs s \<longleftrightarrow> eval (cnf_to_formula cs) s"
+  apply (induction cs rule: induct_list012)
+  apply (auto simp: ctf_correct)
+  done
 
 
 end
