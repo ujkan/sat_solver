@@ -105,7 +105,6 @@ lemma evalCNF_is_fold: "evalCNF cs s = fold (\<lambda>c b. ceval c s \<and> b) c
 lemma ceval_app: "ceval (c1 @ c2) s = (ceval c1 s \<or> ceval c2 s)"
   by (induction c1) auto
 
-
 lemma cnf_or_distr: "evalCNF (map ((@) a) cs) s = (ceval a s \<or> evalCNF cs s)"
   by (induction cs) (auto simp: ceval_app)
 
@@ -123,5 +122,143 @@ lemma evalCNF_not: "evalCNF (toCNF (formula.Not F)) s = (\<not>evalCNF (toCNF F)
 
 lemma toCNF_eval: "eval F s \<longleftrightarrow> evalCNF (toCNF F) s"
   by (induction F) (auto simp: evalCNF_app cnf_or evalCNF_not)
+
+fun literal_var :: "literal \<Rightarrow> string"
+  where
+    "literal_var (P x) = x"
+  | "literal_var (N x) = x"
+
+fun clause_vars :: "clauseCNF \<Rightarrow> string list"
+  where
+    "clause_vars [] = []"
+  | "clause_vars (l # ls) = literal_var l # clause_vars ls"
+
+fun cnf_vars :: "formulaCNF \<Rightarrow> string list"
+  where
+    "cnf_vars [] = []"
+  | "cnf_vars (c # cs) = clause_vars c @ cnf_vars cs"
+
+fun vals :: "string list \<Rightarrow> state list"
+  where
+    "vals [] = [\<lambda>s. False]"
+  | "vals (x # xs) = [s(x:=False) . s \<leftarrow> vals xs] @ [s(x:=True) . s \<leftarrow> vals xs]"
+
+
+lemma ishelp: "s \<in> set (vals cs) \<Longrightarrow> x \<notin> set cs \<Longrightarrow> s x = False"
+  apply (induction cs)
+   apply simp_all
+  sorry
+
+lemma iss: "(\<And>x. x \<notin> set cs \<Longrightarrow> t x = False) \<Longrightarrow> (t \<in> set (vals cs))"
+  apply (induction cs)
+  apply auto
+  sorry
+lemma "length (vals xs) = 2 ^ (length xs)"
+  apply (induction xs)
+  apply auto
+  done
+
+definition solver1 :: "formulaCNF \<Rightarrow> bool"
+  where
+    "solver1 cs = fold (\<or>) [evalCNF cs s . s \<leftarrow> vals (cnf_vars cs)] (False)"
+
+
+lemma not_foldOrFalse_if_not_contains_True: "True \<notin> set ls \<Longrightarrow> fold (\<or>) ls (False) = False"
+  by (induction ls) auto
+
+lemma foldOr_true: "fold (\<or>) ls True = True"
+  by (induction ls) auto
+
+lemma foldOrFalse_weaker: "fold (\<or>) ls False \<Longrightarrow> fold (\<or>) ls b"
+proof (induction ls)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a ls)
+  have "fold (\<or>) (a # ls) False = fold (\<or>) ls a" by simp
+  then show ?case using Cons by (cases a, auto)
+qed
+
+lemma fold_or_False_if_contains_True: "True \<in> set ls \<Longrightarrow> fold (\<or>) ls False"
+proof (induction ls)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a ls)
+  then have "a = True \<or> True \<in> set ls" by simp
+  then show ?case 
+  proof (rule disjE)
+    assume "a = True"
+    then show "fold (\<or>) (a # ls) False" using foldOr_true \<open>a = True\<close> by auto
+  next
+    assume "True \<in> set ls"
+    then have "fold (\<or>) ls False" using Cons by simp
+    then show "fold (\<or>) (a # ls) False" using foldOrFalse_weaker by simp
+  qed
+qed
+
+lemma foldOr_iff_contains_True: "fold (\<or>) ls False = (True \<in> set ls)"
+  using not_foldOrFalse_if_not_contains_True fold_or_False_if_contains_True by auto
   
+
+lemma solver1_alt_def:"solver1 cs = (\<exists>s \<in> set (vals (cnf_vars cs)). evalCNF cs s)" (is "?l = ?r")
+  unfolding solver1_def
+  using foldOr_iff_contains_True by auto
+ 
+lemma solver1_correct: "solver1 cs \<Longrightarrow> satisfiable (toFormula cs)"
+  unfolding satisfiable_def
+  using solver1_alt_def toFormula_eval by blast
+
+lemma vals_contains_aux: "\<forall>s. \<exists>t \<in> set (vals (cnf_vars cs)). \<forall>x \<in> set (cnf_vars cs). (s x = t x)"
+proof
+  fix s
+  let ?t = "(\<lambda>x. (if x \<in> set (cnf_vars cs) then s x else False))"
+  have *: "?t \<in> set (vals (cnf_vars cs))" using iss by simp
+  have "\<forall>x \<in> set (cnf_vars cs). (s x = ?t x)" by simp
+  then show "\<exists>t \<in> set (vals (cnf_vars cs)). \<forall>x \<in> set (cnf_vars cs). (s x = t x)" using * 
+    by (metis (no_types, lifting))
+qed
+
+lemma leval_state_inj: "s (literal_var l) = t (literal_var l) \<Longrightarrow> leval l s = leval l t"
+  apply (induction l)
+  apply auto
+  done
+
+lemma ceval_state_inj: "(\<forall>x \<in> set (clause_vars ls). s x = t x) \<Longrightarrow> (ceval ls s = ceval ls t)"
+  apply (induction ls)
+   apply (auto)
+  using leval_state_inj 
+     apply blast
+  using leval_state_inj apply blast
+  using leval_state_inj apply metis
+  using leval_state_inj apply metis
+  done
+
+
+lemma evalCNF_state_inj: "(\<forall>x \<in> set (cnf_vars cs). s x = t x) \<Longrightarrow> (evalCNF cs s = evalCNF cs t)"
+  apply (induction cs)
+   apply auto
+  using ceval_state_inj apply blast+
+  done
+
+lemma vals_contains: "\<forall>s. \<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs s = evalCNF cs t"
+proof 
+  fix s
+  have "\<exists>t \<in> set (vals (cnf_vars cs)). \<forall>x \<in> set (cnf_vars cs). (s x = t x)" using vals_contains_aux by simp
+  then show "\<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs s = evalCNF cs t" using evalCNF_state_inj by blast
+qed
+
+
+lemma solver1_complete: "satisfiable (toFormula cs) \<Longrightarrow> solver1 cs"
+  unfolding satisfiable_def
+  apply (simp add: toFormula_eval[symmetric])
+proof -
+  assume assm: "\<exists>s. evalCNF cs s"
+  then obtain s where s_def: "evalCNF cs s" by blast
+  then have "\<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs s = evalCNF cs t" using assm vals_contains by auto
+  then have "\<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs t" using s_def by simp
+  then obtain t where "t \<in> set (vals (cnf_vars cs)) \<and> evalCNF cs t" by blast
+  then show ?thesis using solver1_alt_def[symmetric] by auto
+qed
+
 end
