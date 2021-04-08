@@ -143,25 +143,9 @@ fun vals :: "string list \<Rightarrow> state list"
     "vals [] = [\<lambda>s. False]"
   | "vals (x # xs) = [s(x:=False) . s \<leftarrow> vals xs] @ [s(x:=True) . s \<leftarrow> vals xs]"
 
-
-lemma ishelp: "s \<in> set (vals cs) \<Longrightarrow> x \<notin> set cs \<Longrightarrow> s x = False"
-  apply (induction cs)
-   apply simp_all
-  sorry
-
-lemma iss: "(\<And>x. x \<notin> set cs \<Longrightarrow> t x = False) \<Longrightarrow> (t \<in> set (vals cs))"
-  apply (induction cs)
-  apply auto
-  sorry
-lemma "length (vals xs) = 2 ^ (length xs)"
-  apply (induction xs)
-  apply auto
-  done
-
 definition solver1 :: "formulaCNF \<Rightarrow> bool"
   where
     "solver1 cs = fold (\<or>) [evalCNF cs s . s \<leftarrow> vals (cnf_vars cs)] (False)"
-
 
 lemma not_foldOrFalse_if_not_contains_True: "True \<notin> set ls \<Longrightarrow> fold (\<or>) ls (False) = False"
   by (induction ls) auto
