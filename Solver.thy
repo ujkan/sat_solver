@@ -143,9 +143,9 @@ fun vals :: "string list \<Rightarrow> state list"
     "vals [] = [\<lambda>s. False]"
   | "vals (x # xs) = [s(x:=False) . s \<leftarrow> vals xs] @ [s(x:=True) . s \<leftarrow> vals xs]"
 
-definition solver1 :: "formulaCNF \<Rightarrow> bool"
+definition solver_bruteforce :: "formulaCNF \<Rightarrow> bool"
   where
-    "solver1 cs = fold (\<or>) [evalCNF cs s . s \<leftarrow> vals (cnf_vars cs)] (False)"
+    "solver_bruteforce cs = fold (\<or>) [evalCNF cs s . s \<leftarrow> vals (cnf_vars cs)] (False)"
 
 lemma not_foldOrFalse_if_not_contains_True: "True \<notin> set ls \<Longrightarrow> fold (\<or>) ls (False) = False"
   by (induction ls) auto
@@ -184,14 +184,13 @@ qed
 lemma foldOr_iff_contains_True: "fold (\<or>) ls False = (True \<in> set ls)"
   using not_foldOrFalse_if_not_contains_True fold_or_False_if_contains_True by auto
   
-
-lemma solver1_alt_def:"solver1 cs = (\<exists>s \<in> set (vals (cnf_vars cs)). evalCNF cs s)" (is "?l = ?r")
-  unfolding solver1_def
+lemma solver_bruteforce_alt_def:"solver_bruteforce cs = (\<exists>s \<in> set (vals (cnf_vars cs)). evalCNF cs s)" (is "?l = ?r")
+  unfolding solver_bruteforce_def
   using foldOr_iff_contains_True by auto
  
-lemma solver1_correct: "solver1 cs \<Longrightarrow> satisfiable (toFormula cs)"
+lemma solver_bruteforce_correct: "solver_bruteforce cs \<Longrightarrow> satisfiable (toFormula cs)"
   unfolding satisfiable_def
-  using solver1_alt_def toFormula_eval by blast
+  using solver_bruteforce_alt_def toFormula_eval by blast
 
 lemma vals_contains_aux: "\<forall>s. \<exists>t \<in> set (vals (cnf_vars cs)). \<forall>x \<in> set (cnf_vars cs). (s x = t x)"
 proof
@@ -218,7 +217,6 @@ lemma ceval_state_inj: "(\<forall>x \<in> set (clause_vars ls). s x = t x) \<Lon
   using leval_state_inj apply metis
   done
 
-
 lemma evalCNF_state_inj: "(\<forall>x \<in> set (cnf_vars cs). s x = t x) \<Longrightarrow> (evalCNF cs s = evalCNF cs t)"
   apply (induction cs)
    apply auto
@@ -232,8 +230,7 @@ proof
   then show "\<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs s = evalCNF cs t" using evalCNF_state_inj by blast
 qed
 
-
-lemma solver1_complete: "satisfiable (toFormula cs) \<Longrightarrow> solver1 cs"
+lemma solver_bruteforce_complete: "satisfiable (toFormula cs) \<Longrightarrow> solver_bruteforce cs"
   unfolding satisfiable_def
   apply (simp add: toFormula_eval[symmetric])
 proof -
@@ -244,5 +241,88 @@ proof -
   then obtain t where "t \<in> set (vals (cnf_vars cs)) \<and> evalCNF cs t" by blast
   then show ?thesis using solver1_alt_def[symmetric] by auto
 qed
+
+lemma solver_bruteforce_runtime: "length (vals cs) = 2 ^ (length cs)"
+  by (induction cs) auto
+
+fun contains :: "'a \<Rightarrow> 'a list \<Rightarrow> bool"
+  where
+    "contains x [] = False"
+  | "contains x (y # ys) = (if x = y then True else contains x ys)"
+
+fun not :: "literal \<Rightarrow> literal"
+  where
+    "not (P x) = N x"
+  | "not (N x) = P x"
+
+fun consistent :: "clauseCNF \<Rightarrow> bool"
+  where
+    "consistent [] = False"
+  | "consistent (l # ls) = (\<not>contains (not l) ls \<and> consistent ls)"
+
+fun unit_clauses :: "formulaCNF \<Rightarrow> clauseCNF list"
+  where
+    "unit_clauses [] = []"
+  | "unit_clauses (c # cs) = (if length c = 1 then c # unit_clauses cs else unit_clauses cs)"
+
+fun delete :: "'a \<Rightarrow> 'a list \<Rightarrow> 'a list"
+  where
+    "delete x [] = []" 
+  | "delete x (y # ys) = (if x = y then delete x ys else y # (delete x ys))"
+
+fun unit_propagate :: "clauseCNF \<Rightarrow> formulaCNF \<Rightarrow> formulaCNF"
+  where 
+    "unit_propagate c [] = []"
+  | "unit_propagate c (c' # cs) = (let l = hd c 
+                                   in
+                                     (if contains l c' 
+                                      then unit_propagate c cs
+                                      else if contains (not l) c' then delete (not l) c' # unit_propagate c cs
+                                      else unit_propagate c cs)
+                                   )" 
+
+
+definition literals :: "formulaCNF \<Rightarrow> literal list"
+  where
+    "literals cs \<equiv> concat cs"
+
+declare literals_def[simp]
+
+definition pure_literal :: "literal \<Rightarrow> formulaCNF \<Rightarrow> bool"
+  where
+    "pure_literal l cs = (l \<in> set (literals cs) \<and> (not l) \<notin> set (literals cs))"
+
+definition pure_literals :: "formulaCNF \<Rightarrow> literal list"
+  where
+    "pure_literals cs = filter (\<lambda>l. pure_literal l cs ) (literals cs)"
+
+declare pure_literals_def[simp]
+
+fun pure_literal_assign :: "literal \<Rightarrow> formulaCNF \<Rightarrow> formulaCNF"
+  where
+    "pure_literal_assign l [] = []"
+  | "pure_literal_assign l (c # cs) = (if contains l c then pure_literal_assign l cs else c # (pure_literal_assign l cs))"
+
+fun pure_literal_elim :: "formulaCNF \<Rightarrow> formulaCNF"
+  where
+    "pure_literal_elim cs = fold (\<lambda>l cs. pure_literal_assign l cs) (pure_literals cs) cs"
+
+fun unit_propagate_all :: "formulaCNF \<Rightarrow> formulaCNF"
+  where
+    "unit_propagate_all cs = fold (\<lambda>uc c. unit_propagate uc c) (unit_clauses cs) cs"
+
+fun choose_literal :: "formulaCNF \<Rightarrow> literal"
+  where
+    "choose_literal cs = (if cs = [] then undefined else hd (literals cs))"
+
+fun solver_dpll :: "formulaCNF \<Rightarrow> bool"
+  where
+    "solver_dpll cs = (if length cs = 1 then
+                          consistent (hd cs)
+                       else if (contains [] cs) then False
+                       else 
+                         let cs\<^sub>1 = unit_propagate_all cs; cs\<^sub>2 = pure_literal_elim cs\<^sub>1; l = choose_literal cs\<^sub>2 
+                         in (solver_dpll([l] # cs\<^sub>2) \<or> (solver_dpll([not l] # cs\<^sub>2)))
+                       )"
 
 end
