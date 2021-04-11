@@ -255,10 +255,7 @@ fun not :: "literal \<Rightarrow> literal"
     "not (P x) = N x"
   | "not (N x) = P x"
 
-fun consistent :: "clauseCNF \<Rightarrow> bool"
-  where
-    "consistent [] = False"
-  | "consistent (l # ls) = (\<not>contains (not l) ls \<and> consistent ls)"
+
 
 fun unit_clauses :: "formulaCNF \<Rightarrow> clauseCNF list"
   where
@@ -277,8 +274,8 @@ fun unit_propagate :: "clauseCNF \<Rightarrow> formulaCNF \<Rightarrow> formulaC
                                    in
                                      (if contains l c' 
                                       then unit_propagate c cs
-                                      else if contains (not l) c' then delete (not l) c' # unit_propagate c cs
-                                      else unit_propagate c cs)
+                                      else if contains (not l) c' then removeAll (not l) c' # unit_propagate c cs
+                                      else c' # unit_propagate c cs)
                                    )" 
 
 
@@ -292,9 +289,15 @@ definition pure_literal :: "literal \<Rightarrow> formulaCNF \<Rightarrow> bool"
   where
     "pure_literal l cs = (l \<in> set (literals cs) \<and> (not l) \<notin> set (literals cs))"
 
+value "1 \<notin> ({}::nat set)"
+fun pure_literall :: "literal \<Rightarrow> formulaCNF \<Rightarrow> bool"
+  where
+    "pure_literall l [] = False"
+  | "pure_literall l (c # cs) = (contains l c \<and> \<not>contains (not l) c \<and> pure_literall l cs)"
+
 definition pure_literals :: "formulaCNF \<Rightarrow> literal list"
   where
-    "pure_literals cs = filter (\<lambda>l. pure_literal l cs ) (literals cs)"
+    "pure_literals cs = filter (\<lambda>l. pure_literall l cs ) (literals cs)"
 
 declare pure_literals_def[simp]
 
@@ -303,26 +306,185 @@ fun pure_literal_assign :: "literal \<Rightarrow> formulaCNF \<Rightarrow> formu
     "pure_literal_assign l [] = []"
   | "pure_literal_assign l (c # cs) = (if contains l c then pure_literal_assign l cs else c # (pure_literal_assign l cs))"
 
+
+
+fun pure_literal_elimm :: "formulaCNF \<Rightarrow> literal list \<Rightarrow> formulaCNF"
+  where
+    "pure_literal_elimm cs [] = cs"
+  | "pure_literal_elimm cs (l # ls) = pure_literal_elimm (pure_literal_assign l cs) ls"
+
 fun pure_literal_elim :: "formulaCNF \<Rightarrow> formulaCNF"
   where
     "pure_literal_elim cs = fold (\<lambda>l cs. pure_literal_assign l cs) (pure_literals cs) cs"
 
-fun unit_propagate_all :: "formulaCNF \<Rightarrow> formulaCNF"
+
+fun falt :: "('b \<Rightarrow> 'a \<Rightarrow> 'a) \<Rightarrow> 'a \<Rightarrow> 'b list \<Rightarrow> 'a"
   where
-    "unit_propagate_all cs = fold (\<lambda>uc c. unit_propagate uc c) (unit_clauses cs) cs"
+    "falt f a [] = a"
+  | "falt f a (x # xs) = falt f (f x a) xs"
+
+fun unit_propagate_all :: "formulaCNF \<Rightarrow> clauseCNF list \<Rightarrow> formulaCNF"
+  where
+    "unit_propagate_all cs [] = cs"
+  | "unit_propagate_all cs (uc # ucs) = unit_propagate_all (unit_propagate uc cs) ucs"
+
+lemma "unit_propagate_all cs ucs = fold (\<lambda>uc. unit_propagate uc) ucs cs"
+  apply (induction ucs arbitrary: cs)
+  apply auto
+  done
+
+definition uprog :: "formulaCNF \<Rightarrow> formulaCNF" where "uprog cs \<equiv> fold (\<lambda>uc. unit_propagate uc) (unit_clauses cs) cs"
+
+text\<open>
+uprog cs (u # uc) = uprog (uprog cs u) uc"
+\<close>
 
 fun choose_literal :: "formulaCNF \<Rightarrow> literal"
   where
-    "choose_literal cs = (if cs = [] then undefined else hd (literals cs))"
+    "choose_literal cs = (if (literals cs) = [] then undefined else (hd (literals cs)))"
 
-fun solver_dpll :: "formulaCNF \<Rightarrow> bool"
+fun subst :: "formulaCNF \<Rightarrow> literal \<Rightarrow> bool \<Rightarrow> formulaCNF"
   where
-    "solver_dpll cs = (if length cs = 1 then
-                          consistent (hd cs)
-                       else if (contains [] cs) then False
-                       else 
-                         let cs\<^sub>1 = unit_propagate_all cs; cs\<^sub>2 = pure_literal_elim cs\<^sub>1; l = choose_literal cs\<^sub>2 
-                         in (solver_dpll([l] # cs\<^sub>2) \<or> (solver_dpll([not l] # cs\<^sub>2)))
+    "subst [] l b = []"
+  | "subst (c # cs) l b = (case b of False \<Rightarrow> removeAll l c # subst cs l b |
+                                     True \<Rightarrow> (if contains l c then subst cs l b else c # subst cs l b)) "
+
+definition consistent :: "formulaCNF \<Rightarrow> bool"
+  where
+    "consistent cs = (\<forall>l \<in> set (literals cs). (not l) \<notin> set (literals cs))"
+
+declare consistent_def[simp]
+
+text
+\<open>
+http://poincare.matf.bg.ac.rs/~filip/phd/classic-dpll-verification.pdf
+
+Termination proof can be made manually ! 
+
+
+\<close>
+
+value "solver_bruteforce [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'']]"
+value "pure_literal_elim (uprog [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'']])"
+value "consistent (subst (pure_literal_elim (uprog [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'']])) (P ''x'') True)"
+value "subst (pure_literal_elim (uprog [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'']])) (P ''z'') True"
+
+fun sz :: "formulaCNF \<Rightarrow> nat"
+  where
+    "sz []  = 0"
+  | "sz (c # cs) = length c + sz cs"
+
+
+lemma sz_unit_propagate: "sz (unit_propagate c cs) \<le> sz cs"
+  apply (induction cs arbitrary: c)
+   apply auto
+  by (smt add_mono_thms_linordered_semiring(1) le_add1 le_add_same_cancel1 length_removeAll_less_eq list.inject nat_add_left_cancel_le sz.elims trans_le_add2)
+
+
+declare uprog_def[simp]
+
+lemma sz_unit_propagate_all: "sz (unit_propagate_all cs ucs) \<le> sz cs"
+  apply (induction ucs arbitrary: cs)
+   apply auto
+  using le_trans sz_unit_propagate by blast
+
+lemma sz_pure_literal_assign: "sz (pure_literal_assign l cs) \<le> sz cs"
+  apply (induction cs)
+   apply auto
+  done
+lemma sz_pure_literal_elim: "sz (pure_literal_elimm cs ls) \<le> sz cs"
+  apply (induction ls arbitrary: cs)
+   apply auto
+  using sz_pure_literal_assign le_trans by blast
+
+lemma sz_subst_weak: "sz (subst cs l b) \<le> sz cs"
+  apply (induction cs)
+   apply (auto split: bool.split)
+  by (simp add: add_mono_thms_linordered_semiring(1))
+
+
+
+lemma sz_subst_False:"l \<in> set (literals cs) \<Longrightarrow> sz (subst cs l False) < sz cs"
+  apply (induction cs)
+   apply auto
+   apply (simp add: add_less_le_mono length_removeAll_less sz_subst_weak)
+  by (meson add_le_less_mono length_removeAll_less_eq)
+
+
+
+lemma contains_iff_elem: "contains l c \<longleftrightarrow> l \<in> set c"
+  apply (induction c)
+   apply auto
+  done
+
+
+lemma sz_partition_filter: "sz cs = sz (filter (\<lambda>x. K x) cs) + sz (filter (\<lambda>x. \<not>K x) cs)"
+  apply (induction cs)
+   apply auto
+  done
+lemma subst_True_filter_def: "subst cs l True = filter (\<lambda>c. \<not>contains l c) cs"
+  apply (induction cs)
+  apply auto
+  done
+
+lemma contains_size: "contains c cs \<Longrightarrow> sz [c] \<le> sz cs"
+  apply (induction cs)
+   apply (auto split: if_splits)
+  done
+
+lemma sz_subst_True: "l \<in> set (literals cs) \<Longrightarrow> sz (subst cs l True) < sz cs"
+proof-
+  assume assm: "l \<in> set (literals cs)"
+  then have "\<exists>c \<in> set cs. contains l c" using contains_iff_elem[symmetric] by force
+  then obtain c where cdef:"c \<in> set cs \<and> contains l c" by blast
+  then have "length c > 0" using assm by auto
+
+
+  have "contains c (filter (\<lambda>c. contains l c) cs)" using cdef by (simp add: contains_iff_elem)
+  then have "sz (filter (\<lambda>c. contains l c) cs) \<ge> sz [c]" using contains_size cdef by blast
+  then have *: "sz (filter (\<lambda>c. contains l c) cs) > 0" using \<open>length c > 0\<close> 
+    using gr_zeroI by fastforce
+
+   
+  have "sz cs = sz (filter (\<lambda>c. contains l c) cs) + sz (subst cs l True)" using sz_partition_filter subst_True_filter_def by auto
+  
+  then show "sz (subst cs l True) < sz cs" using subst_True_filter_def * by simp
+qed
+  
+lemma sz_subst_strong: "l \<in> set (literals cs) \<Longrightarrow> sz (subst cs l b) < sz cs"
+  using sz_subst_True sz_subst_False by (cases b) auto
+
+
+lemma sz_subst_main: "literals cs \<noteq> [] \<Longrightarrow> l = choose_literal cs \<Longrightarrow> sz (subst cs l b) < sz cs"
+proof -
+  assume assms: "literals cs \<noteq> []" "l = choose_literal cs"
+  then have " l = hd (literals cs)" by auto
+  then have " l \<in> set (literals cs)" using assms 
+    using list.set_sel(1) by blast
+  then show ?thesis using sz_subst_strong by simp
+qed
+
+
+
+function solver_dpll :: "formulaCNF \<Rightarrow> bool"
+  where
+    "solver_dpll cs = (if consistent cs then True
+                       else if contains [] cs then False
+                       else
+                         let cs\<^sub>1 = unit_propagate_all cs (unit_clauses cs); cs\<^sub>2 = pure_literal_elimm cs\<^sub>1 (pure_literals cs\<^sub>1); l = choose_literal cs\<^sub>2
+                         in 
+                           (if literals cs\<^sub>2 = [] then (if contains [] cs\<^sub>2 then False else True)
+                            else
+                              solver_dpll (subst cs\<^sub>2 l True) \<or> (solver_dpll (subst cs\<^sub>2 l False))
+                           )
                        )"
+  by pat_completeness auto
+termination apply (relation "measure (\<lambda>cs. (sz cs))") apply (auto simp: sz_pure_literal_elim sz_unit_propagate_all sz_subst_main split: if_splits)
+  
+   apply (smt Nil_eq_concat_conv le_trans list.set_sel(1) literals_def not_le sz_pure_literal_elim sz_subst_strong sz_unit_propagate_all)
+
+  by (smt Nil_eq_concat_conv antisym leI le_trans list.set_sel(1) literals_def sz_pure_literal_elim sz_subst_weak sz_subst_strong sz_unit_propagate_all)
+  
+  
 
 end
