@@ -184,7 +184,7 @@ qed
 lemma foldOr_iff_contains_True: "fold (\<or>) ls False = (True \<in> set ls)"
   using not_foldOrFalse_if_not_contains_True fold_or_False_if_contains_True by auto
   
-lemma solver_bruteforce_alt_def:"solver_bruteforce cs = (\<exists>s \<in> set (vals (cnf_vars cs)). evalCNF cs s)" (is "?l = ?r")
+lemma solver_bruteforce_alt_def:"solver_bruteforce cs = (\<exists>s \<in> set (vals (cnf_vars cs)). evalCNF cs s)"
   unfolding solver_bruteforce_def
   using foldOr_iff_contains_True by auto
  
@@ -192,11 +192,17 @@ lemma solver_bruteforce_correct: "solver_bruteforce cs \<Longrightarrow> satisfi
   unfolding satisfiable_def
   using solver_bruteforce_alt_def toFormula_eval by blast
 
+lemma vals_false_everywhere_else: "(\<And>x. x \<notin> set cs \<Longrightarrow> t x = False) \<Longrightarrow> (t \<in> set (vals cs))"
+  apply (induction cs arbitrary: t)
+   apply auto
+  by (smt (z3) fun_upd_def fun_upd_triv fun_upd_upd image_iff)
+  
+
 lemma vals_contains_aux: "\<forall>s. \<exists>t \<in> set (vals (cnf_vars cs)). \<forall>x \<in> set (cnf_vars cs). (s x = t x)"
 proof
   fix s
   let ?t = "(\<lambda>x. (if x \<in> set (cnf_vars cs) then s x else False))"
-  have *: "?t \<in> set (vals (cnf_vars cs))" using iss by simp
+  have *: "?t \<in> set (vals (cnf_vars cs))" using vals_false_everywhere_else by simp
   have "\<forall>x \<in> set (cnf_vars cs). (s x = ?t x)" by simp
   then show "\<exists>t \<in> set (vals (cnf_vars cs)). \<forall>x \<in> set (cnf_vars cs). (s x = t x)" using * 
     by (metis (no_types, lifting))
@@ -239,7 +245,7 @@ proof -
   then have "\<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs s = evalCNF cs t" using assm vals_contains by auto
   then have "\<exists>t \<in> set (vals (cnf_vars cs)). evalCNF cs t" using s_def by simp
   then obtain t where "t \<in> set (vals (cnf_vars cs)) \<and> evalCNF cs t" by blast
-  then show ?thesis using solver1_alt_def[symmetric] by auto
+  then show ?thesis using solver_bruteforce_alt_def[symmetric] by auto
 qed
 
 lemma solver_bruteforce_runtime: "length (vals cs) = 2 ^ (length cs)"
@@ -369,45 +375,45 @@ value "pure_literal_elim (uprog [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'
 value "consistent (subst (pure_literal_elim (uprog [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'']])) (P ''x'') True)"
 value "subst (pure_literal_elim (uprog [[P ''x'', P ''y''], [P ''z'', P ''y''], [N ''y'']])) (P ''z'') True"
 
-fun sz :: "formulaCNF \<Rightarrow> nat"
+fun size :: "formulaCNF \<Rightarrow> nat"
   where
-    "sz []  = 0"
-  | "sz (c # cs) = length c + sz cs"
+    "size []  = 0"
+  | "size (c # cs) = length c + size cs"
 
 
-lemma sz_unit_propagate: "sz (unit_propagate c cs) \<le> sz cs"
+lemma size_unit_propagate: "size (unit_propagate c cs) \<le> size cs"
   apply (induction cs arbitrary: c)
    apply auto
-  by (smt add_mono_thms_linordered_semiring(1) le_add1 le_add_same_cancel1 length_removeAll_less_eq list.inject nat_add_left_cancel_le sz.elims trans_le_add2)
+  by (smt add_mono_thms_linordered_semiring(1) le_add1 le_add_same_cancel1 length_removeAll_less_eq list.inject nat_add_left_cancel_le size.elims trans_le_add2)
 
 
 declare uprog_def[simp]
 
-lemma sz_unit_propagate_all: "sz (unit_propagate_all cs ucs) \<le> sz cs"
+lemma size_unit_propagate_all: "size (unit_propagate_all cs ucs) \<le> size cs"
   apply (induction ucs arbitrary: cs)
    apply auto
-  using le_trans sz_unit_propagate by blast
+  using le_trans size_unit_propagate by blast
 
-lemma sz_pure_literal_assign: "sz (pure_literal_assign l cs) \<le> sz cs"
+lemma size_pure_literal_assign: "size (pure_literal_assign l cs) \<le> size cs"
   apply (induction cs)
    apply auto
   done
-lemma sz_pure_literal_elim: "sz (pure_literal_elimm cs ls) \<le> sz cs"
+lemma size_pure_literal_elim: "size (pure_literal_elimm cs ls) \<le> size cs"
   apply (induction ls arbitrary: cs)
    apply auto
-  using sz_pure_literal_assign le_trans by blast
+  using size_pure_literal_assign le_trans by blast
 
-lemma sz_subst_weak: "sz (subst cs l b) \<le> sz cs"
+lemma size_subst_weak: "size (subst cs l b) \<le> size cs"
   apply (induction cs)
    apply (auto split: bool.split)
   by (simp add: add_mono_thms_linordered_semiring(1))
 
 
 
-lemma sz_subst_False:"l \<in> set (literals cs) \<Longrightarrow> sz (subst cs l False) < sz cs"
+lemma size_subst_False:"l \<in> set (literals cs) \<Longrightarrow> size (subst cs l False) < size cs"
   apply (induction cs)
    apply auto
-   apply (simp add: add_less_le_mono length_removeAll_less sz_subst_weak)
+   apply (simp add: add_less_le_mono length_removeAll_less size_subst_weak)
   by (meson add_le_less_mono length_removeAll_less_eq)
 
 
@@ -418,7 +424,7 @@ lemma contains_iff_elem: "contains l c \<longleftrightarrow> l \<in> set c"
   done
 
 
-lemma sz_partition_filter: "sz cs = sz (filter (\<lambda>x. K x) cs) + sz (filter (\<lambda>x. \<not>K x) cs)"
+lemma size_partition_filter: "size cs = size (filter (\<lambda>x. K x) cs) + size (filter (\<lambda>x. \<not>K x) cs)"
   apply (induction cs)
    apply auto
   done
@@ -427,12 +433,12 @@ lemma subst_True_filter_def: "subst cs l True = filter (\<lambda>c. \<not>contai
   apply auto
   done
 
-lemma contains_size: "contains c cs \<Longrightarrow> sz [c] \<le> sz cs"
+lemma contains_size: "contains c cs \<Longrightarrow> size [c] \<le> size cs"
   apply (induction cs)
    apply (auto split: if_splits)
   done
 
-lemma sz_subst_True: "l \<in> set (literals cs) \<Longrightarrow> sz (subst cs l True) < sz cs"
+lemma size_subst_True: "l \<in> set (literals cs) \<Longrightarrow> size (subst cs l True) < size cs"
 proof-
   assume assm: "l \<in> set (literals cs)"
   then have "\<exists>c \<in> set cs. contains l c" using contains_iff_elem[symmetric] by force
@@ -441,27 +447,27 @@ proof-
 
 
   have "contains c (filter (\<lambda>c. contains l c) cs)" using cdef by (simp add: contains_iff_elem)
-  then have "sz (filter (\<lambda>c. contains l c) cs) \<ge> sz [c]" using contains_size cdef by blast
-  then have *: "sz (filter (\<lambda>c. contains l c) cs) > 0" using \<open>length c > 0\<close> 
+  then have "size (filter (\<lambda>c. contains l c) cs) \<ge> size [c]" using contains_size cdef by blast
+  then have *: "size (filter (\<lambda>c. contains l c) cs) > 0" using \<open>length c > 0\<close> 
     using gr_zeroI by fastforce
 
    
-  have "sz cs = sz (filter (\<lambda>c. contains l c) cs) + sz (subst cs l True)" using sz_partition_filter subst_True_filter_def by auto
+  have "size cs = size (filter (\<lambda>c. contains l c) cs) + size (subst cs l True)" using size_partition_filter subst_True_filter_def by auto
   
-  then show "sz (subst cs l True) < sz cs" using subst_True_filter_def * by simp
+  then show "size (subst cs l True) < size cs" using subst_True_filter_def * by simp
 qed
   
-lemma sz_subst_strong: "l \<in> set (literals cs) \<Longrightarrow> sz (subst cs l b) < sz cs"
-  using sz_subst_True sz_subst_False by (cases b) auto
+lemma size_subst_strong: "l \<in> set (literals cs) \<Longrightarrow> size (subst cs l b) < size cs"
+  using size_subst_True size_subst_False by (cases b) auto
 
 
-lemma sz_subst_main: "literals cs \<noteq> [] \<Longrightarrow> l = choose_literal cs \<Longrightarrow> sz (subst cs l b) < sz cs"
+lemma size_subst_main: "literals cs \<noteq> [] \<Longrightarrow> l = choose_literal cs \<Longrightarrow> size (subst cs l b) < size cs"
 proof -
   assume assms: "literals cs \<noteq> []" "l = choose_literal cs"
   then have " l = hd (literals cs)" by auto
   then have " l \<in> set (literals cs)" using assms 
     using list.set_sel(1) by blast
-  then show ?thesis using sz_subst_strong by simp
+  then show ?thesis using size_subst_strong by simp
 qed
 
 
@@ -479,11 +485,11 @@ function solver_dpll :: "formulaCNF \<Rightarrow> bool"
                            )
                        )"
   by pat_completeness auto
-termination apply (relation "measure (\<lambda>cs. (sz cs))") apply (auto simp: sz_pure_literal_elim sz_unit_propagate_all sz_subst_main split: if_splits)
-  
-   apply (smt Nil_eq_concat_conv le_trans list.set_sel(1) literals_def not_le sz_pure_literal_elim sz_subst_strong sz_unit_propagate_all)
-
-  by (smt Nil_eq_concat_conv antisym leI le_trans list.set_sel(1) literals_def sz_pure_literal_elim sz_subst_weak sz_subst_strong sz_unit_propagate_all)
+termination 
+  apply (relation "measure (\<lambda>cs. (size cs))") 
+    apply (auto simp: size_pure_literal_elim size_unit_propagate_all size_subst_main split: if_splits)
+   apply (smt Nil_eq_concat_conv le_trans list.set_sel(1) literals_def not_le size_pure_literal_elim size_subst_strong size_unit_propagate_all)
+  by (smt Nil_eq_concat_conv antisym leI le_trans list.set_sel(1) literals_def size_pure_literal_elim size_subst_weak size_subst_strong size_unit_propagate_all)
   
   
 
